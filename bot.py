@@ -42,7 +42,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data[user_id] = {"words": [], "lang": "English", "level_score": 0}
     await update.message.reply_text(
-        "Hei! Я подготовлю тебя к Norskprøve B2. Выбери свой родной язык для объяснений:",
+        "Hei! You will reach level B2 one the Norskprøve. Choose your language:",
         reply_markup=get_language_keyboard()
     )
 
@@ -59,8 +59,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await query.edit_message_text(
         f"Valgt språk: {selected_lang}. \n\n"
-        "Я буду оценивать твои ответы и постепенно усложнять норвежский до уровня B2. "
-        "Давай начнем! Напиши что-нибудь на норвежском."
+        "Я буI will evaluate your answers and gradually increase the level of our communication. "
+        "Lets start! Skriv noe på norsk."
     )
 
 async def reset_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
