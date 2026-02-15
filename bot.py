@@ -54,29 +54,39 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
-    
-    if user_id not in user_data:
-        user_data[user_id] = {"words": [], "lang": "English"}
 
-    current_lang = user_data[user_id]["lang"]
+    if user_id not in user_data or "lang" not in user_data[user_id]:
+        await update.message.reply_text("Пожалуйста, выберите язык через /start")
+        return
 
-    # Промпт для Groq (Llama 3 очень хорошо понимает такие инструкции)
+    chosen_lang = user_data[user_id]["lang"]
+
+    # КОМБИНИРОВАННЫЙ ПРОМПТ: КОНТРОЛЬ B2 + ИСПРАВЛЕНИЕ + ПЕРЕВОД
     prompt = f"""
-    Role: Professional Norwegian B2 tutor. 
-    User language: {current_lang}. 
-    User message: "{text}"
+    Ты — эксперт по Norskprøve B2. Ученик выбрал язык для объяснений: {chosen_lang}.
+    Сообщение ученика: "{text}"
     
-    Instructions:
-    1. Respond in Norwegian (B2 level: complex sentences, official style).
-    2. Provide translation and a VERY brief grammar tip in {current_lang}.
-    3. Strict limit: 5 sentences total.
-    4. If there's a good B2 word: ADD_WORD: [word].
-    5. Be concise and fast.
-    6. Also add a translation of the explanation in {current_lang}.
-    7. Each answer must have a translation in {current_lang}.
+    ТВОЙ СТРОГИЙ ПЛАН ОТВЕТА:
+    1. RETTING (ИСПРАВЛЕНИЕ): Проверь грамматику, порядок слов и лексику. 
+       - Если есть ошибки, напиши: "Riktig: [исправленная фраза]". 
+       - Дай краткое объяснение ошибки и ПЕРЕВОД этого объяснения на {chosen_lang}.
+       - Если ошибок нет: "Perfekt! Ingen feil."
+    
+    2. SVAR (ОТВЕТ): Ответь на норвежском (уровень B2: сложные союзы, официальный стиль). 
+       - Обязательно добавь ПЕРЕВОД своего ответа на {chosen_lang}.
+    
+    3. GRAMMATIKK-TIPS: Дай один очень короткий совет по грамматике уровня B2 на языке {chosen_lang}.
+    
+    4. ADD_WORD: [слово уровня B2].
+    
+    ПРАВИЛА:
+    - Всего НЕ БОЛЕЕ 5-6 предложений.
+    - Перевод на {chosen_lang} обязателен для каждого раздела.
+    - Будь быстр и точен.
     """
     
     response_text = await get_groq_response(prompt)
+    
     
     # Обработка слов
     if "ADD_WORD:" in response_text:
