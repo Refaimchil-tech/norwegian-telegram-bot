@@ -10,7 +10,11 @@ import random
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY не найден!")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
+
 
 logging.basicConfig(level=logging.INFO)
 
