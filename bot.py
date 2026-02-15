@@ -113,13 +113,14 @@ async def send_lesson(app):
         await app.bot.send_message(chat_id=user_id, text=lesson)
 
 
-async def main():
+def main():  # Убрали async
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_word))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    # Настройка планировщика
     scheduler = AsyncIOScheduler()
     scheduler.add_job(lambda: send_lesson(app), "cron", hour=8)
     scheduler.add_job(lambda: send_lesson(app), "cron", hour=12)
@@ -127,9 +128,8 @@ async def main():
     scheduler.add_job(lambda: send_lesson(app), "cron", hour=19)
     scheduler.start()
 
-    await app.run_polling()
-
+    # Запускаем без await — этот метод сам создаст нужный цикл событий
+    app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()  # Вызываем напрямую, без asyncio.run
