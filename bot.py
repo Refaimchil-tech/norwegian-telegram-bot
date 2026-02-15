@@ -15,12 +15,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Настройка Gemini
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # База данных в памяти
 user_data = {}
 
-# Клавиатура выбора языка
 def get_language_keyboard():
     keyboard = [
         [InlineKeyboardButton("Русский", callback_data='lang_Russian'),
@@ -37,18 +36,16 @@ async def get_gemini_response(prompt):
         return response.text
     except Exception as e:
         logging.error(f"Gemini Error: {e}")
-        return "Error connection to AI."
+        return "Feil med AI-tilkobling."
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_data[user_id] = {"words": [], "lang": "English"}
+    user_data[user_id] = {"words": [], "lang": "English", "level_score": 0}
     await update.message.reply_text(
-        "Hei! Выбери язык, на котором я буду объяснять тебе норвежский:",
+        "Hei! Я подготовлю тебя к Norskprøve B2. Выбери свой родной язык для объяснений:",
         reply_markup=get_language_keyboard()
     )
 
-# Обработка выбора языка с кнопок
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -56,43 +53,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     selected_lang = query.data.split('_')[1]
     
     if user_id not in user_data:
-        user_data[user_id] = {"words": [], "lang": selected_lang}
+        user_data[user_id] = {"words": [], "lang": selected_lang, "level_score": 0}
     else:
         user_data[user_id]["lang"] = selected_lang
         
-    await query.edit_message_text(f"Perfect! Now I will explain everything in {selected_lang}. Write me something in Norwegian or your language!")
+    await query.edit_message_text(
+        f"Valgt språk: {selected_lang}. \n\n"
+        "Я буду оценивать твои ответы и постепенно усложнять норвежский до уровня B2. "
+        "Давай начнем! Напиши что-нибудь на норвежском."
+    )
 
-# Команда /reset
 async def reset_memory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_data[user_id] = {"words": [], "lang": "English"}
-    await update.message.reply_text("Memory cleared! Language reset to English.", reply_markup=get_language_keyboard())
+    user_data[user_id] = {"words": [], "lang": "English", "level_score": 0}
+    await update.message.reply_text("Memory reset! Start over with /start")
 
-# Основной обработчик сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
     if user_id not in user_data:
-        user_data[user_id] = {"words": [], "lang": "English"}
+        user_data[user_id] = {"words": [], "lang": "English", "level_score": 0}
 
     current_lang = user_data[user_id]["lang"]
 
-    # Жесткий промпт, чтобы бот не переключался на другие языки
+    # ПРОМПТ ДЛЯ ПОДГОТОВКИ К B2
     prompt = f"""
-    Ты — учитель норвежского. Твой ученик говорит на языке: {current_lang}.
-    Сообщение ученика: "{text}"
+    Ты — эксперт по подготовке к экзамену Norskprøve (уровень B2).
+    Твой ученик говорит на {current_lang}. Его сообщение: "{text}"
     
-    ПРАВИЛА:
-    1. Ответ СТРОГО на языке: {current_lang}. Категорически запрещено использовать другие языки для объяснений.
-    2. Формат: Короткая фраза на норвежском + перевод и мини-пояснение на {current_lang}.
-    3. Максимум 5 предложений.
-    4. Если есть новое слово: ADD_WORD: [слово].
+    ТВОИ ЗАДАЧИ:
+    1. Оцени уровень норвежского в сообщении. Если там ошибки, вежливо исправь их, объясняя правило на {current_lang}.
+    2. Отвечай на норвежском, используя лексику и грамматику уровня B2 (используй союзы som, ат, fordi, выражения типа 'på den одной siden').
+    3. Поддерживай диалог так, чтобы выстроить подготовку к устной или письменной части экзамена (темы: работа, экология, политика, образование).
+    4. Все объяснения и перевод давай СТРОГО на {current_lang}.
+    5. Будь кратким (максимум 5-6 предложений).
+    6. Если есть полезное слово для B2: ADD_WORD: [слово].
     """
     
     response = await get_gemini_response(prompt)
     
-    # Сохранение слова
     if "ADD_WORD:" in response:
         word_part = response.split("ADD_WORD:")[-1].strip().split()[0]
         if word_part not in user_data[user_id]["words"]:
@@ -101,14 +101,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clean_text = response.split("ADD_WORD:")[0].strip()
     await update.message.reply_text(clean_text)
 
-# Рассылка (4 раза в день)
 async def scheduled_message(app):
     for user_id, data in user_data.items():
         user_lang = data.get("lang", "English")
-        prompt = f"Write one short Norwegian question and its translation/explanation in {user_lang}. Max 3 sentences."
+        # Темы для B2
+        topics = ["arbeidsliv", "utdanning", "miljøvern", "norsk politikk", "velferdssamfunnet"]
+        topic = random.choice(topics)
+        
+        prompt = f"""
+        Напиши сложный вопрос на норвежском (уровень B2) на тему '{topic}'.
+        Добавь перевод вопроса и краткую подсказку, какие аргументы можно использовать, на языке {user_lang}.
+        Всего 3-4 предложения.
+        """
+        
         message = await get_gemini_response(prompt)
         try:
-            await app.bot.send_message(chat_id=user_id, text=f"🇳🇴 Norwegian Practice:\n\n{message}")
+            await app.bot.send_message(chat_id=user_id, text=f"🎓 Norskprøve B2 Trening ({topic}):\n\n{message}")
         except:
             continue
 
@@ -127,8 +135,6 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
     setup_scheduler(application)
-    
-    print("Бот запущен...")
     application.run_polling()
 
 if __name__ == "__main__":
