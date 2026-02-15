@@ -73,6 +73,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     4. If there's a good B2 word: ADD_WORD: [word].
     5. Be concise and fast.
     6. Also add a translation of the explanation in {current_lang}.
+    7. Each answer must have a translation in {current_lang}.
     """
     
     response_text = await get_groq_response(prompt)
