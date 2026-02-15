@@ -72,7 +72,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     3. Strict limit: 5 sentences total.
     4. If there's a good B2 word: ADD_WORD: [word].
     5. Be concise and fast.
-    6. Also add a translation of the explanation in the language: {chosen_lang}.
+    6. Also add a translation of the explanation in {current_lang}.
     """
     
     response_text = await get_groq_response(prompt)
