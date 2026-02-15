@@ -67,7 +67,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     User message: "{text}"
     
     Instructions:
-    1. If the student's message contains errors (grammar, word order, word choice), write them out. Write: "The correct sentence is: [corrected phrase]." Explain the error in {current_lang}.
+    1. If the student's message contains errors (grammar, word order, word choice), write them out. Write: "The correct sentence is: [corrected phrase]." Explain the error in {current_lang}. If no errors: "Perfekt! Ingen feil." (and translate this praise into {chosen_lang}).
     2. Answer the question or maintain a dialogue at B2 level Norwegian.
     3. Write a translation of your answer in {current_lang}.Respond in Norwegian (B2 level: complex sentences, official style).
     4. Provide translation and a VERY brief grammar tip in {current_lang}.
