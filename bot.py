@@ -6,84 +6,93 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Настройка
+# Логирование
 logging.basicConfig(level=logging.INFO)
+
+# Ключи
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash') # Или gemini-2.0-flash-exp
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-# База данных: теперь храним еще и предпочтительный язык
-user_data = {} 
+# База данных пользователей
+user_data = {}
 
 async def get_gemini_response(prompt):
-    response = model.generate_content(prompt)
-    return response.text
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        logging.error(f"Gemini Error: {e}")
+        return "Error."
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    user_name = update.effective_user.first_name
     text = update.message.text
 
     if user_id not in user_data:
-        user_data[user_id] = {"words": [], "lang": "английский"} # По умолчанию
+        # Теперь не ставим "русский" по умолчанию, а ждем определения
+        user_data[user_id] = {"words": [], "lang": "English"} 
 
-    # Промпт теперь учитывает английский и турецкий
+    # ЖЕСТКИЙ ПРОМПТ НА СОБЛЮДЕНИЕ ЯЗЫКА
     prompt = f"""
-    Ты — международный учитель норвежского. Пользователь написал: "{text}"
+    Ты — учитель норвежского. Твое общение строится в формате микро-диалогов (до 5 предложений).
     
-    Задачи:
-    1. Определи язык пользователя (Русский, Фарси, Испанский, Английский или Турецкий).
-    2. Ответь на норвежском, а затем ОБЪЯСНИ всё на языке пользователя.
-    3. В самом конце сообщения напиши строго одну строку в формате: 
-       DETECTED_LANG: [название языка на русском]
-    4. Если есть новое слово для списка: ADD_WORD: [слово].
+    ИНСТРУКЦИЯ ПО ЯЗЫКУ:
+    1. Определи язык, на котором пишет пользователь: {text}.
+    2. ТЫ ОБЯЗАН отвечать и давать все объяснения ТОЛЬКО на этом языке (Russian, Farsi, Spanish, English, or Turkish).
+    3. ЗАПРЕЩЕНО использовать русский, если пользователь пишет на английском или турецком.
+    
+    СТРУКТУРА ОТВЕТА:
+    - Фраза на норвежском.
+    - Перевод и краткое пояснение (1-2 предложения) на языке пользователя.
+    - Если есть новое слово: ADD_WORD: [слово].
+    - В конце метка: DETECTED_LANG: [название языка на английском].
     """
     
-    try:
-        response = await get_gemini_response(prompt)
-        
-        # Сохраняем язык для будущих рассылок
-        if "DETECTED_LANG:" in response:
-            lang = response.split("DETECTED_LANG:")[-1].strip().split('\n')[0]
-            user_data[user_id]["lang"] = lang
+    response = await get_gemini_response(prompt)
+    
+    # Техническая обработка ответа
+    if "DETECTED_LANG:" in response:
+        detected = response.split("DETECTED_LANG:")[-1].strip().split('\n')[0]
+        user_data[user_id]["lang"] = detected
+    
+    if "ADD_WORD:" in response:
+        word_part = response.split("ADD_WORD:")[-1].strip().split()[0]
+        if word_part not in user_data[user_id]["words"]:
+            user_data[user_id]["words"].append(word_part)
 
-        # Логика добавления слова
-        if "ADD_WORD:" in response:
-            word = response.split("ADD_WORD:")[-1].strip().split()[0]
-            if word not in user_data[user_id]["words"]:
-                user_data[user_id]["words"].append(word)
+    # Чистим текст
+    final_text = response.split("DETECTED_LANG:")[0].split("ADD_WORD:")[0].strip()
+    await update.message.reply_text(final_text)
 
-        # Очищаем текст от технических меток перед отправкой пользователю
-        clean_text = response.split("DETECTED_LANG:")[0].split("ADD_WORD:")[0].strip()
-        await update.message.reply_text(clean_text)
-            
-    except Exception as e:
-        logging.error(f"Ошибка: {e}")
-        await update.message.reply_text("Sorry, error occurred. / Произошла ошибка.")
-
-# Рассылка на языке пользователя
+# Рассылка на языке, который бот запомнил для этого юзера
 async def scheduled_message(app):
     for user_id, data in user_data.items():
-        user_lang = data.get("lang", "английский")
-        prompt = f"Напиши короткий вопрос на норвежском и его перевод на {user_lang}. Объясни одно слово из вопроса на {user_lang}."
+        user_lang = data.get("lang", "English")
+        prompt = f"Give one short Norwegian sentence and its translation into {user_lang}. Short explanation in {user_lang}. Max 3 sentences total."
         
+        message = await get_gemini_response(prompt)
         try:
-            message = await get_gemini_response(prompt)
-            await app.bot.send_message(chat_id=user_id, text=f"🇳🇴 Practice time!\n\n{message}")
-        except Exception as e:
-            logging.error(f"Ошибка рассылки {user_id}: {e}")
+            await app.bot.send_message(chat_id=user_id, text=f"🇳🇴 Quick Practice:\n\n{message}")
+        except:
+            continue
 
 def setup_scheduler(app):
     scheduler = AsyncIOScheduler()
-    # Рассылка 4 раза в день (пример времени)
-    for h in [9, 13, 17, 21]:
+    # Рассылка 4 раза в день
+    for h in [10, 14, 18, 22]:
         scheduler.add_job(scheduled_message, 'cron', hour=h, minute=0, args=[app])
     scheduler.start()
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Hei! I'm your Norwegian tutor. Write to me in your language!")
+
 def main():
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("Send me a message!")))
+    application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
     setup_scheduler(application)
