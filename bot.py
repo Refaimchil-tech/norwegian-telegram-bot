@@ -1,135 +1,124 @@
-import logging
-import sqlite3
 import os
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from openai import OpenAI
+import logging
 import random
+import asyncio
+import google.generativeai as genai
+from datetime import datetime
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY не найден!")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-
+# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-conn = sqlite3.connect("database.db")
-cursor = conn.cursor()
+# Переменные из Railway
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    telegram_id INTEGER UNIQUE,
-    level TEXT DEFAULT 'A1'
-)
-""")
+# Настройка Gemini
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS words (
-    telegram_id INTEGER,
-    word TEXT,
-    translation TEXT
-)
-""")
+# "База данных" в памяти (для Railway лучше использовать БД, но для начала сойдет словарь)
+# Структура: { user_id: { "words": ["hallo", "takk"], "chat_history": [...] } }
+user_data = {}
 
-conn.commit()
+# Вспомогательная функция для запросов к Gemini
+async def get_gemini_response(prompt, history=[]):
+    chat = model.start_chat(history=history)
+    response = chat.send_message(prompt)
+    return response.text
 
-
-async def ask_ai(prompt):
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7
-    )
-    return response.choices[0].message.content
-
-
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    cursor.execute("INSERT OR IGNORE INTO users VALUES (?, 'A1')", (user_id,))
-    conn.commit()
-    await update.message.reply_text("Hei! 🇳🇴 Я твой AI-учитель норвежского.")
+    if user_id not in user_data:
+        user_data[user_id] = {"words": [], "history": []}
+    
+    await update.message.reply_text(
+        "Hei! Я твой бот для изучения норвежского. \n"
+        "Я буду писать тебе 4 раза в день, проводить викторины и учить с тобой новые слова. \n"
+        "Просто напиши мне что-нибудь на норвежском или добавь слово, которое хочешь выучить!"
+    )
 
-
-async def add_word(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    word = " ".join(context.args)
-
-    if not word:
-        await update.message.reply_text("Напиши: /add bok")
-        return
-
-    translation = await ask_ai(f"Переведи слово {word} с норвежского на русский")
-
-    cursor.execute("INSERT INTO words VALUES (?, ?, ?)", (user_id, word, translation))
-    conn.commit()
-
-    await update.message.reply_text(f"Слово добавлено ✅\nПеревод: {translation}")
-
-
+# Обработка сообщений (Общение и запоминание слов)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     text = update.message.text
 
+    if user_id not in user_data:
+        user_data[user_id] = {"words": [], "history": []}
+
+    # Промпт для Gemini, чтобы он выделил новые слова и поддержал диалог
     prompt = f"""
-Ты преподаватель норвежского языка.
-Исправь ошибки:
-{text}
+    Ты — учитель норвежского языка. Пользователь написал: "{text}". 
+    1. Поддержи диалог на норвежском (с переводом на русский).
+    2. Если в сообщении есть новое слово, которое пользователь явно хочет выучить, напиши в конце строки: "ADD_WORD: [слово]".
+    3. Веди себя дружелюбно.
+    """
+    
+    response = await get_gemini_response(prompt)
+    
+    # Проверка, нужно ли добавить слово в список
+    if "ADD_WORD:" in response:
+        word = response.split("ADD_WORD:")[-1].strip()
+        if word not in user_data[user_id]["words"]:
+            user_data[user_id]["words"].append(word)
 
-Ответь:
-1. Исправленный вариант
-2. Объяснение
-3. Ответ на норвежском
-"""
+    await update.message.reply_text(response.replace(f"ADD_WORD: {word if 'word' in locals() else ''}", ""))
 
-    answer = await ask_ai(prompt)
-    await update.message.reply_text(answer)
+# Функция для рассылки (Спрашивает что-то на норвежском)
+async def scheduled_message(app):
+    for user_id in user_data.keys():
+        prompt = "Напиши короткий вопрос на норвежском для ученика (уровень А1-А2), чтобы завязать диалог. Напиши перевод на русский."
+        message = await get_gemini_response(prompt)
+        try:
+            await app.bot.send_message(chat_id=user_id, text=f"🇳🇴 Время практики!\n\n{message}")
+        except Exception as e:
+            print(f"Не удалось отправить сообщение {user_id}: {e}")
 
+# Функция для викторины
+async def send_quiz(app):
+    for user_id, data in user_data.items():
+        if not data["words"]:
+            prompt = "Придумай викторину: напиши 1 норвежское слово и 3 варианта перевода (один правильный)."
+        else:
+            word_to_test = random.choice(data["words"])
+            prompt = f"Сделай викторину для слова '{word_to_test}'. Напиши слово и 3 варианта перевода."
+        
+        quiz_text = await get_gemini_response(prompt)
+        try:
+            await app.bot.send_message(chat_id=user_id, text=f"🧠 Викторина!\n\n{quiz_text}")
+        except Exception as e:
+            print(f"Не удалось отправить викторину {user_id}: {e}")
 
-async def send_lesson(app):
-    users = cursor.execute("SELECT telegram_id FROM users").fetchall()
-
-    for user in users:
-        user_id = user[0]
-
-        words = cursor.execute(
-            "SELECT word FROM words WHERE telegram_id=? ORDER BY RANDOM() LIMIT 3",
-            (user_id,)
-        ).fetchall()
-
-        word_list = ", ".join([w[0] for w in words])
-
-        prompt = f"""
-Создай мини-урок норвежского.
-Используй слова: {word_list}
-Добавь 3 новых слова.
-Добавь мини-викторину.
-"""
-
-        lesson = await ask_ai(prompt)
-        await app.bot.send_message(chat_id=user_id, text=lesson)
-
-
-def main():  # Убрали async
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("add", add_word))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Настройка планировщика
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: send_lesson(app), "cron", hour=8)
-    scheduler.add_job(lambda: send_lesson(app), "cron", hour=12)
-    scheduler.add_job(lambda: send_lesson(app), "cron", hour=16)
-    scheduler.add_job(lambda: send_lesson(app), "cron", hour=19)
+# Настройка планировщика (4 раза в день)
+def setup_scheduler(app):
+    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+    
+    # Рассылка вопросов в 10:00, 14:00, 18:00
+    times = ["10:00", "14:00", "18:00"]
+    for t in times:
+        hour, minute = map(int, t.split(":"))
+        scheduler.add_job(scheduled_message, 'cron', hour=hour, minute=minute, args=[app])
+    
+    # Викторина в 21:00
+    scheduler.add_job(send_quiz, 'cron', hour=21, minute=0, args=[app])
+    
     scheduler.start()
 
-    # Запускаем без await — этот метод сам создаст нужный цикл событий
-    app.run_polling()
+def main():
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    # Хендлеры
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    
+    # Запуск планировщика
+    setup_scheduler(application)
+    
+    print("Бот запущен...")
+    application.run_polling()
 
 if __name__ == "__main__":
-    main()  # Вызываем напрямую, без asyncio.run
+    main()
