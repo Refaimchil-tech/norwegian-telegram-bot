@@ -37,7 +37,7 @@ async def get_gemini_response(prompt):
         return response.text
     except Exception as e:
         logging.error(f"Gemini Error: {e}")
-        return "I`m pooping, sorry..."
+        return "I'm pooping, sorry..."
 
 # Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
