@@ -9,13 +9,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Переменные окружения
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Настройка Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.5-flash')
+# Переменные окружения
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+# Настройка groq
+client = Groq(api_key=GROQ_API_KEY)
+# Используем Llama 3 — она отлично справляется с норвежским
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 # База данных в памяти
 user_data = {}
@@ -31,12 +33,17 @@ def get_language_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-async def get_gemini_response(prompt):
+async def get_groq_response(prompt):
     try:
-        response = model.generate_content(prompt)
-        return response.text
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=500
+        )
+        return completion.choices[0].message.content
     except Exception as e:
-        logging.error(f"Gemini Error: {e}")
+        logging.error(f"Groq Error: {e}")
         return "I'm pooping, sorry..."
 
 # Команда /start
