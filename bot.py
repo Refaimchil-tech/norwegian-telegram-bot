@@ -100,3 +100,13 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in user_data:
+        # Удаляем данные пользователя или просто сбрасываем язык
+        user_data[user_id] = {"words": [], "lang": "English"} 
+    await update.message.reply_text("Memory cleared! Language reset to English.")
+
+# И добавь хендлер в функцию main:
+# application.add_handler(CommandHandler("reset", reset))
